@@ -220,11 +220,21 @@ pub const CommandBody = union(CommandId) {
     }
 };
 
+pub const SignOnAnswer = struct {
+    signature_length: u8 = 8,
+    // TODO: Investigate with real hardware: the docs suggest that this
+    // is *usually* 8 bytes long but don't state if this is dynamically
+    // sized or not; what should we do? (I really don't want to allocate :()
+    signature: [8]u8,
+};
+
+pub const GetParameterAnswer = struct { value: u8 };
+
 pub const AnswerBody = union(CommandId) {
     // General
-    sign_on,
+    sign_on: SignOnAnswer,
     set_parameter,
-    get_parameter,
+    get_parameter: GetParameterAnswer,
     set_device_parameters,
     osccal,
     load_address,
@@ -316,6 +326,8 @@ pub const Message = struct {
 };
 
 test "Simple" {
+    _ = Message;
+
     var buf = [_]u8{ 0x02, 0x98, 0x01 };
     var fbs = std.io.fixedBufferStream(&buf);
     _ = try CommandBody.decode(fbs.reader());
