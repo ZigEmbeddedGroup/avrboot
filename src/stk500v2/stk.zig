@@ -1,7 +1,7 @@
 //! STK500v2 impl
 
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("../utils.zig");
 
 /// ID of commands and their responses
 pub const CommandId = enum(u8) {
@@ -41,7 +41,7 @@ pub const CommandError = error{
     CommandUnknown,
 };
 
-pub const Status = enum(u8) {
+pub const ResponseStatus = enum(u8) {
     // Success
     /// Command executed OK
     cmd_ok = 0x00,
@@ -218,6 +218,18 @@ pub const CommandBody = union(CommandId) {
 
         @panic("Invalid data!");
     }
+
+    pub fn encode(self: CommandBody, writer: anytype) !void {
+        try writer.writeByte(@enumToInt(self));
+
+        inline for (std.meta.fields(CommandBody)) |field| {
+            if (@enumToInt(@field(CommandId, field.name)) == @enumToInt(self)) {
+                return utils.encodeAny(writer, @field(self, field.name));
+            }
+        }
+
+        unreachable;
+    }
 };
 
 pub const SignOnAnswer = struct {
@@ -258,7 +270,7 @@ pub const AnswerBody = union(CommandId) {
 
     pub fn decode(reader: anytype) !AnswerBody {
         var id = try reader.readByte();
-        var status = @intToEnum(Status, try reader.readByte());
+        var status = @intToEnum(ResponseStatus, try reader.readByte());
 
         switch (status) {
             .cmd_ok => {},
@@ -277,6 +289,11 @@ pub const AnswerBody = union(CommandId) {
 
         @panic("Invalid data!");
     }
+
+    pub fn encode(self: AnswerBody, writer: anytype) !void {
+        _ = self;
+        _ = writer;
+    }
 };
 
 pub const MessageKind = enum { command, answer };
@@ -289,6 +306,13 @@ pub const MessageBody = union(MessageKind) {
             .command => MessageBody{ .command = try CommandBody.decode(reader) },
             .answer => MessageBody{ .answer = try AnswerBody.decode(reader) },
         };
+    }
+
+    pub fn encode(self: MessageBody, writer: anytype) !void {
+        switch (self) {
+            .command => |command| try command.encode(writer),
+            .answer => |answer| try answer.encode(writer),
+        }
     }
 };
 
@@ -318,11 +342,20 @@ pub const Message = struct {
         return message;
     }
 
-    // pub fn encode(self: Message, writer: anytype) !void {
-    //     var counting = std.io.countingWriter(std.io.null_writer);
+    pub fn encode(self: Message, writer: anytype) !void {
+        var checksum = utils.checksumWriter(writer);
 
-    //     var message_size = @intCast(u16, counting.bytes_written);
-    // }
+        try checksum.writer().writeByte(0x1B);
+        try checksum.writer().writeByte(self.sequence_number);
+
+        var counting = std.io.countingWriter(std.io.null_writer);
+        try self.body.encode(counting.writer());
+        try checksum.writer().writeIntBig(u16, @intCast(u16, counting.bytes_written));
+        try checksum.writer().writeByte(0x0E);
+        try self.body.encode(checksum.writer());
+
+        try writer.writeByte(checksum.checksum);
+    }
 };
 
 test "Simple" {

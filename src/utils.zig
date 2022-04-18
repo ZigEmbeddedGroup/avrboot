@@ -103,3 +103,26 @@ pub fn decodeAny(comptime T: type, reader: anytype) anyerror!T {
         else => @compileError("Cannot decode: " ++ @typeName(T)),
     };
 }
+
+pub fn encodeAny(writer: anytype, value: anytype) !void {
+    const T = @TypeOf(value);
+    const info = @typeInfo(T);
+
+    return switch (info) {
+        .Void => {},
+        .Int => writer.writeIntBig(T, value),
+        .Struct, .Enum, .Union => if (@hasDecl(T, "encode")) try @field(T, "encode")(writer, value) else switch (info) {
+            .Struct => {
+                inline for (std.meta.fields(T)) |field| {
+                    try encodeAny(writer, @field(value, field.name));
+                }
+            },
+            .Enum => encodeAny(writer, @enumToInt(value)),
+            else => @panic("Cannot encode: " ++ @typeName(T)),
+        },
+        .Array => {
+            _ = try writer.writeAll(&value);
+        },
+        else => @compileError("Cannot decode: " ++ @typeName(T)),
+    };
+}
