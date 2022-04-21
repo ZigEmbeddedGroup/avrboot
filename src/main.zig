@@ -99,7 +99,21 @@ pub fn main() !void {
         }
     }
 
-    // writer.writeAll(&[_]u8{});
+    std.debug.assert((try reader.readByte()) == @enumToInt(stk.ResponseStatus.ok));
+
+    var client = stk.stkClient(reader, writer);
+    std.log.info("{d}", .{try client.getParameter(stk.Parameter.leds)});
+
+    // try serial.flushSerialPort(port, true, true);
+    // const signature = [_]u8{ 0x1e, 0x95, 0x0f };
+
+    // try writer.writeAll(&[_]u8{ @enumToInt(stk.CommandId.read_sign), 0x20 });
+    // var data: [5]u8 = undefined;
+
+    // try writer.writeAll(&data);
+    // std.debug.assert(data[0] == @enumToInt(stk.ResponseStatus.in_sync));
+    // std.debug.assert(std.mem.eql(u8, data[1..3], &signature));
+    // std.debug.assert(data[4] == @enumToInt(stk.ResponseStatus.ok));
 }
 
 test {

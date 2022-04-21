@@ -3,6 +3,9 @@
 const std = @import("std");
 const utils = @import("../utils.zig");
 
+/// Indicates end of command
+const EOP = ' ';
+
 /// ID of commands and their responses
 pub const CommandId = enum(u8) {
     get_sync = 0x30,
@@ -108,3 +111,44 @@ pub const Parameter = enum(u8) {
     selftimed = 0x96,
     topcard_detect = 0x98,
 };
+
+pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
+    return struct {
+        reader: ReaderType,
+        writer: WriterType,
+
+        const Self = @This();
+
+        pub const ReadWriteError = ReaderType.Error || WriterType.Error || error{EndOfStream};
+        const CheckSyncError = ReaderType.Error || error{ NoSync, EndOfStream };
+
+        fn checkSync(self: Self) CheckSyncError!void {
+            return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
+                .in_sync => {},
+                .no_sync => error.NoSync,
+                else => @panic("Invalid sync response!"),
+            };
+        }
+
+        pub const GetParameterError = ReadWriteError || error{ Failed, NoSync };
+        pub fn getParameter(self: Self, param: Parameter) GetParameterError!u8 {
+            std.debug.assert(Parameter.RW.get(param).read);
+
+            try self.writer.writeAll(&[_]u8{ @enumToInt(CommandId.get_parameter), @enumToInt(param), EOP });
+
+            try self.checkSync();
+            var data: [2]u8 = undefined;
+            _ = try self.reader.readAll(&data);
+
+            return switch (@intToEnum(ResponseStatus, data[1])) {
+                .ok => data[0],
+                .failed => error.Failed,
+                else => @panic("Invalid response!"),
+            };
+        }
+    };
+}
+
+pub fn stkClient(reader: anytype, writer: anytype) STKClient(@TypeOf(reader), @TypeOf(writer)) {
+    return STKClient(@TypeOf(reader), @TypeOf(writer)){ .reader = reader, .writer = writer };
+}
