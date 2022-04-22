@@ -113,6 +113,8 @@ pub fn main() !void {
     });
     try client.enterProgrammingMode();
     _ = client.loadAddress;
+    _ = client.programPagePreData;
+    _ = client.programPagePostData;
     try client.leaveProgrammingMode();
     // std.log.info("{d}", .{});
 

@@ -288,6 +288,24 @@ pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
                 else => @panic("Invalid response!"),
             };
         }
+
+        pub const ProgramPageError = ReadWriteError;
+        pub fn programPagePreData(self: Self, length: u16) ProgramPageError!void {
+            try self.writer.writeByte(@enumToInt(CommandId.prog_page));
+            try self.writer.writeIntBig(u16, length);
+            try self.writer.writeByte(0x46);
+        }
+
+        pub fn programPagePostData(self: Self) ProgramPageError!void {
+            try self.writer.writeByte(EOP);
+
+            try self.checkSync();
+
+            return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
+                .ok => {},
+                else => @panic("Invalid response!"),
+            };
+        }
     };
 }
 
