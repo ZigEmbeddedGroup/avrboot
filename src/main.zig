@@ -77,7 +77,7 @@ pub fn main() !void {
     try reset(port);
     try serial.flushSerialPort(port, true, true);
 
-    const buf = &[_]u8{ @enumToInt(stk.CommandId.get_sync), 0x20 };
+    var client = stk.stkClient(reader, writer);
 
     var attempt: usize = 0;
     while (attempt < 32) : (attempt += 1) {
@@ -88,21 +88,33 @@ pub fn main() !void {
             try serial.flushSerialPort(port, true, true);
         }
 
-        try serial.flushSerialPort(port, true, true);
-        try writer.writeAll(buf);
-
-        if ((reader.readByte() catch continue) == @enumToInt(stk.ResponseStatus.in_sync)) {
-            std.log.info("In sync!", .{});
-            break;
-        } else {
-            @panic("so this shouldnt happen...");
-        }
+        client.getSync() catch continue;
+        std.log.info("In sync!", .{});
+        break;
     }
 
-    std.debug.assert((try reader.readByte()) == @enumToInt(stk.ResponseStatus.ok));
-
-    var client = stk.stkClient(reader, writer);
-    std.log.info("{d}", .{try client.getParameter(stk.Parameter.leds)});
+    std.debug.assert(std.mem.eql(u8, &(try client.readSignatureBytes()), &[_]u8{ 0x1e, 0x95, 0x0f }));
+    try client.setDevice(.{
+        .device_code = 0x86,
+        .revision = 0,
+        .prog_type = .both, // ?
+        .parm_mode = .pseudo, // ?
+        .polling = false, // ?
+        .self_timed = false, // ?
+        .lock_bytes = 1, // ?
+        .fuse_bytes = 1,
+        .flash_poll_val_1 = 0x53,
+        .flash_poll_val_2 = 0x53,
+        .eeprom_poll_val_1 = 0xff,
+        .eeprom_poll_val_2 = 0xff,
+        .page_size = 128,
+        .eeprom_size = 1024,
+        .flash_size = 32768,
+    });
+    try client.enterProgrammingMode();
+    _ = client.loadAddress;
+    try client.leaveProgrammingMode();
+    // std.log.info("{d}", .{});
 
     // try serial.flushSerialPort(port, true, true);
     // const signature = [_]u8{ 0x1e, 0x95, 0x0f };

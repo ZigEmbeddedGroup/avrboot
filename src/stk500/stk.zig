@@ -112,6 +112,53 @@ pub const Parameter = enum(u8) {
     topcard_detect = 0x98,
 };
 
+pub const ProgType = enum(u8) {
+    /// Both Parallel/High-voltage and Serial mode
+    both = 0,
+    /// Only Parallel/High-voltage
+    only = 1,
+};
+
+pub const InterfaceType = enum(u8) {
+    /// Pseudo parallel interface
+    pseudo = 0,
+    /// Full parallel interface
+    full = 1,
+};
+
+pub const ProgrammingParameters = struct {
+    /// Device code as defined in “devices.h”
+    device_code: u8,
+    /// Device revision. Currently not used. Should be set to 0.
+    revision: u8,
+    /// Defines which Program modes is supported
+    prog_type: ProgType,
+    /// Defines if the device has a full parallel interface or a
+    /// pseudo parallel programming interface
+    parm_mode: InterfaceType,
+    /// Defines if polling may be used during SPI access
+    polling: bool,
+    /// Defines if programming instructions are self timed
+    self_timed: bool,
+    /// Number of Lock bytes. Currently not used. Should be set
+    /// to actual number of Lock bytes for future compability.
+    lock_bytes: u8,
+    /// Number of Fuse bytes. Currently not used. Should be set
+    /// to actual number of Fuse bytes for future caompability
+    fuse_bytes: u8,
+    /// FLASH polling value. See Data Sheet for the device.
+    flash_poll_val_1: u8,
+    /// FLASH polling value. Same as flash_poll_val_1
+    flash_poll_val_2: u8,
+    /// EEPROM polling value 1 (P1). See data sheet for the device.
+    eeprom_poll_val_1: u8,
+    /// EEPROM polling value 2 (P2). See data sheet for the device.
+    eeprom_poll_val_2: u8,
+    page_size: u16,
+    eeprom_size: u16,
+    flash_size: u32,
+};
+
 pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
     return struct {
         reader: ReaderType,
@@ -119,7 +166,7 @@ pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
 
         const Self = @This();
 
-        pub const ReadWriteError = ReaderType.Error || WriterType.Error || error{EndOfStream};
+        pub const ReadWriteError = ReaderType.Error || WriterType.Error || error{ NoSync, EndOfStream };
         const CheckSyncError = ReaderType.Error || error{ NoSync, EndOfStream };
 
         fn checkSync(self: Self) CheckSyncError!void {
@@ -130,7 +177,19 @@ pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
             };
         }
 
-        pub const GetParameterError = ReadWriteError || error{ Failed, NoSync };
+        pub const GetSyncError = ReadWriteError;
+        pub fn getSync(self: Self) GetSyncError!void {
+            try self.writer.writeAll(&[_]u8{ @enumToInt(CommandId.get_sync), EOP });
+
+            try self.checkSync();
+
+            return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
+                .ok => {},
+                else => @panic("Invalid response!"),
+            };
+        }
+
+        pub const GetParameterError = ReadWriteError || error{Failed};
         pub fn getParameter(self: Self, param: Parameter) GetParameterError!u8 {
             std.debug.assert(Parameter.RW.get(param).read);
 
@@ -143,6 +202,89 @@ pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
             return switch (@intToEnum(ResponseStatus, data[1])) {
                 .ok => data[0],
                 .failed => error.Failed,
+                else => @panic("Invalid response!"),
+            };
+        }
+
+        pub const ReadSignatureBytesError = ReadWriteError;
+        pub fn readSignatureBytes(self: Self) ReadSignatureBytesError![3]u8 {
+            try self.writer.writeAll(&[_]u8{ @enumToInt(CommandId.read_sign), EOP });
+
+            try self.checkSync();
+            var data: [4]u8 = undefined;
+            _ = try self.reader.readAll(&data);
+
+            return switch (@intToEnum(ResponseStatus, data[3])) {
+                .ok => data[0..3].*,
+                else => @panic("Invalid response!"),
+            };
+        }
+
+        pub const SetDeviceError = ReadWriteError;
+        pub fn setDevice(self: Self, params: ProgrammingParameters) SetDeviceError!void {
+            try self.writer.writeAll(&[_]u8{
+                @enumToInt(CommandId.set_device),
+                params.device_code,
+                params.revision,
+                @enumToInt(params.prog_type),
+                @enumToInt(params.parm_mode),
+                if (params.polling) 1 else 0,
+                if (params.self_timed) 1 else 0,
+                params.lock_bytes,
+                params.fuse_bytes,
+                params.flash_poll_val_1,
+                params.flash_poll_val_2,
+                params.eeprom_poll_val_1,
+                params.eeprom_poll_val_1,
+            });
+            try self.writer.writeIntLittle(u16, params.page_size);
+            try self.writer.writeIntLittle(u16, params.eeprom_size);
+            try self.writer.writeIntLittle(u32, params.flash_size);
+            try self.writer.writeByte(EOP);
+
+            try self.checkSync();
+
+            return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
+                .ok => {},
+                else => @panic("Invalid response!"),
+            };
+        }
+
+        pub const EnterProgrammingModeError = ReadWriteError || error{NoDevice};
+        pub fn enterProgrammingMode(self: Self) EnterProgrammingModeError!void {
+            try self.writer.writeAll(&[_]u8{ @enumToInt(CommandId.enter_progmode), EOP });
+
+            try self.checkSync();
+
+            return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
+                .ok => {},
+                .no_device => error.NoDevice,
+                else => @panic("Invalid response!"),
+            };
+        }
+
+        pub const LeaveProgrammingModeError = ReadWriteError;
+        pub fn leaveProgrammingMode(self: Self) LeaveProgrammingModeError!void {
+            try self.writer.writeAll(&[_]u8{ @enumToInt(CommandId.leave_progmode), EOP });
+
+            try self.checkSync();
+
+            return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
+                .ok => {},
+                else => @panic("Invalid response!"),
+            };
+        }
+
+        pub const LoadAddressError = ReadWriteError;
+        pub fn loadAddress(self: Self, address: u16) LoadAddressError!void {
+            try self.writer.writeByte(@enumToInt(CommandId.load_address));
+            try self.writer.writeIntBig(u16, address);
+            try self.writer.writeByte(EOP);
+
+            try self.checkSync();
+
+            return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
+                .ok => {},
                 else => @panic("Invalid response!"),
             };
         }
