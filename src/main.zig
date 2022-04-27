@@ -94,10 +94,11 @@ pub fn main() !void {
     }
 
     std.debug.assert(std.mem.eql(u8, &(try client.readSignatureBytes()), &[_]u8{ 0x1e, 0x95, 0x0f }));
+    // try client.setDevice(std.mem.zeroes(stk.ProgrammingParameters));
     try client.setDevice(.{
         .device_code = 0x86,
         .revision = 0,
-        .prog_type = .both, // ?
+        .prog_type = .both,
         .parm_mode = .pseudo, // ?
         .polling = false, // ?
         .self_timed = false, // ?
@@ -112,22 +113,29 @@ pub fn main() !void {
         .flash_size = 32768,
     });
     try client.enterProgrammingMode();
-    _ = client.loadAddress;
-    _ = client.programPagePreData;
-    _ = client.programPagePostData;
+
+    var hex_file = try std.fs.cwd().openFile("test-blinky-chips.atmega328p.bin", .{});
+    defer hex_file.close();
+
+    var address: u16 = 0;
+
+    var size = (try hex_file.stat()).size;
+    while (address < size) {
+        try client.loadAddress(address);
+
+        var buf: [128]u8 = undefined;
+        var bytes_written = try hex_file.reader().read(&buf);
+
+        std.log.info("Writing {d} at {d} (program size: {d})", .{ bytes_written, address, size });
+        try client.programPagePreData(@intCast(u16, bytes_written));
+        try port.writer().writeAll(buf[0..bytes_written]);
+        try client.programPagePostData();
+
+        address += @intCast(u16, bytes_written);
+        std.time.sleep(4 * std.time.ns_per_ms);
+    }
+
     try client.leaveProgrammingMode();
-    // std.log.info("{d}", .{});
-
-    // try serial.flushSerialPort(port, true, true);
-    // const signature = [_]u8{ 0x1e, 0x95, 0x0f };
-
-    // try writer.writeAll(&[_]u8{ @enumToInt(stk.CommandId.read_sign), 0x20 });
-    // var data: [5]u8 = undefined;
-
-    // try writer.writeAll(&data);
-    // std.debug.assert(data[0] == @enumToInt(stk.ResponseStatus.in_sync));
-    // std.debug.assert(std.mem.eql(u8, data[1..3], &signature));
-    // std.debug.assert(data[4] == @enumToInt(stk.ResponseStatus.ok));
 }
 
 test {
