@@ -98,13 +98,36 @@ pub fn main() !void {
         var bytes_written = try hex_file.reader().read(&buf);
 
         std.log.info("Writing {d} at {d} (program size: {d})", .{ bytes_written, address, size });
-        try client.programPagePreData(@intCast(u16, bytes_written));
+        try client.programPagePreData(@intCast(u16, bytes_written), .flash);
         try port.writer().writeAll(buf[0..bytes_written]);
         try client.programPagePostData();
 
         address += @intCast(u16, bytes_written);
         std.time.sleep(4 * std.time.ns_per_ms);
     }
+
+    std.log.info("Program uploaded!", .{});
+
+    address = 0;
+    try hex_file.seekTo(0);
+    while (address < size) {
+        try client.loadAddress(address);
+
+        var actual_buf: [128]u8 = undefined;
+        var expected_buf: [128]u8 = undefined;
+
+        var expected_bytes_written = try hex_file.reader().read(&expected_buf);
+        _ = try client.readPage(&actual_buf, .flash);
+
+        std.log.info("Verifying {d} at {d} (program size: {d})", .{ expected_bytes_written, address >> 1, size });
+
+        if (!std.mem.eql(u8, actual_buf[0..expected_bytes_written], expected_buf[0..expected_bytes_written])) @panic("Upload error!");
+
+        address += @intCast(u16, expected_bytes_written);
+        std.time.sleep(4 * std.time.ns_per_ms);
+    }
+
+    std.log.info("Program verified!", .{});
 
     try client.leaveProgrammingMode();
 }

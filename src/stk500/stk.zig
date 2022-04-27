@@ -159,6 +159,11 @@ pub const ProgrammingParameters = struct {
     flash_size: u32,
 };
 
+pub const MemType = enum(u8) {
+    eeprom = 'E',
+    flash = 'F',
+};
+
 pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
     return struct {
         reader: ReaderType,
@@ -278,7 +283,9 @@ pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
         pub const LoadAddressError = ReadWriteError;
         pub fn loadAddress(self: Self, address: u16) LoadAddressError!void {
             try self.writer.writeByte(@enumToInt(CommandId.load_address));
-            try self.writer.writeIntBig(u16, address);
+            // NOTE: Address must be `>> 1` for this to work for some strange reason; beware of this!!
+            // TODO: Does this only apply in certain cases? If so, why??
+            try self.writer.writeIntLittle(u16, address >> 1);
             try self.writer.writeByte(EOP);
 
             try self.checkSync();
@@ -290,10 +297,10 @@ pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
         }
 
         pub const ProgramPageError = ReadWriteError;
-        pub fn programPagePreData(self: Self, length: u16) ProgramPageError!void {
+        pub fn programPagePreData(self: Self, length: u16, mem_type: MemType) ProgramPageError!void {
             try self.writer.writeByte(@enumToInt(CommandId.prog_page));
             try self.writer.writeIntBig(u16, length);
-            try self.writer.writeByte(0x46);
+            try self.writer.writeByte(@enumToInt(mem_type));
         }
 
         pub fn programPagePostData(self: Self) ProgramPageError!void {
@@ -303,6 +310,22 @@ pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
 
             return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
                 .ok => {},
+                else => @panic("Invalid response!"),
+            };
+        }
+
+        pub const ReadPageError = ReadWriteError;
+        pub fn readPage(self: Self, buf: []u8, mem_type: MemType) ReadPageError!usize {
+            try self.writer.writeByte(@enumToInt(CommandId.read_page));
+            try self.writer.writeIntBig(u16, @intCast(u16, buf.len));
+            try self.writer.writeAll(&[_]u8{ @enumToInt(mem_type), EOP });
+
+            try self.checkSync();
+
+            var bytes_read = try self.reader.readAll(buf);
+
+            return switch (@intToEnum(ResponseStatus, try self.reader.readByte())) {
+                .ok => bytes_read,
                 else => @panic("Invalid response!"),
             };
         }
