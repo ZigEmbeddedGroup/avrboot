@@ -4,24 +4,6 @@ const testing = std.testing;
 const serial = @import("serial.zig");
 pub const stk = @import("stk500/stk.zig");
 
-const CommTimeouts = extern struct {
-    read_interval_timeout: std.os.windows.DWORD,
-    read_total_timeout_multiplier: std.os.windows.DWORD,
-    read_total_timeout_constant: std.os.windows.DWORD,
-    write_total_timeout_multiplier: std.os.windows.DWORD,
-    write_total_timeout_constant: std.os.windows.DWORD,
-};
-
-extern "kernel32" fn GetCommTimeouts(
-    hFile: std.os.windows.HANDLE,
-    lpCommTimeouts: *CommTimeouts,
-) std.os.windows.BOOL;
-
-extern "kernel32" fn SetCommTimeouts(
-    hFile: std.os.windows.HANDLE,
-    lpCommTimeouts: *CommTimeouts,
-) std.os.windows.BOOL;
-
 fn reset(port: std.fs.File) !void {
     // Fun fact: avrdude does
     // RTS/DTR = 0
@@ -57,17 +39,6 @@ pub fn main() !void {
         .{ .mode = .read_write },
     );
     defer port.close();
-
-    var ct = std.mem.zeroes(CommTimeouts);
-    if (GetCommTimeouts(port.handle, &ct) == 0)
-        return error.WindowsError;
-
-    ct.read_interval_timeout = 0;
-    ct.read_total_timeout_multiplier = 100;
-    ct.read_total_timeout_constant = 100;
-
-    if (SetCommTimeouts(port.handle, &ct) == 0)
-        return error.WindowsError;
 
     try serial.configureSerialPort(port, cfg);
 
