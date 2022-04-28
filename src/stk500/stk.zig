@@ -297,13 +297,11 @@ pub fn STKClient(comptime ReaderType: type, comptime WriterType: type) type {
         }
 
         pub const ProgramPageError = ReadWriteError;
-        pub fn programPagePreData(self: Self, length: u16, mem_type: MemType) ProgramPageError!void {
+        pub fn programPage(self: Self, buf: []const u8, mem_type: MemType) ProgramPageError!void {
             try self.writer.writeByte(@enumToInt(CommandId.prog_page));
-            try self.writer.writeIntBig(u16, length);
+            try self.writer.writeIntBig(u16, @intCast(u16, buf.len));
             try self.writer.writeByte(@enumToInt(mem_type));
-        }
-
-        pub fn programPagePostData(self: Self) ProgramPageError!void {
+            try self.writer.writeAll(buf);
             try self.writer.writeByte(EOP);
 
             try self.checkSync();

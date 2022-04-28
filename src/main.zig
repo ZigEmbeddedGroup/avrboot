@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const serial = @import("serial.zig");
 pub const stk = @import("stk500/stk.zig");
+pub const boards = @import("boards.zig");
 
 fn reset(port: std.fs.File) !void {
     // Fun fact: avrdude does
@@ -21,10 +22,18 @@ fn reset(port: std.fs.File) !void {
 }
 
 pub fn main() !void {
-    var it = try serial.list();
-    while (try it.next()) |port| {
-        std.debug.print("{s} (file: {s}, driver: {s})\n", .{ port.display_name, port.file_name, port.driver });
+    const allocator = std.heap.page_allocator;
+
+    var args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len != 3) {
+        std.debug.print("avrboot [port] [.bin file]", .{});
+        return;
     }
+
+    var port_name = args[1];
+    var file_name = args[2];
 
     var cfg = serial.SerialConfig{
         .handshake = .none,
@@ -34,11 +43,20 @@ pub fn main() !void {
         .stop_bits = .one,
     };
 
-    var port = try std.fs.cwd().openFile(
-        "\\\\.\\COM3", // if any, these will likely exist on a machine
+    var port = std.fs.cwd().openFile(
+        port_name, // if any, these will likely exist on a machine "\\\\.\\COM3"
         .{ .mode = .read_write },
-    );
+    ) catch {
+        std.log.err("Could not open port!", .{});
+        return;
+    };
     defer port.close();
+
+    var bin_file = std.fs.cwd().openFile(file_name, .{}) catch {
+        std.log.err("Could not open bin file!", .{});
+        return;
+    };
+    defer bin_file.close();
 
     try serial.configureSerialPort(port, cfg);
 
@@ -66,41 +84,20 @@ pub fn main() !void {
 
     std.debug.assert(std.mem.eql(u8, &(try client.readSignatureBytes()), &[_]u8{ 0x1e, 0x95, 0x0f }));
     // try client.setDevice(std.mem.zeroes(stk.ProgrammingParameters));
-    try client.setDevice(.{
-        .device_code = 0x86,
-        .revision = 0,
-        .prog_type = .both,
-        .parm_mode = .pseudo, // ?
-        .polling = false, // ?
-        .self_timed = false, // ?
-        .lock_bytes = 1, // ?
-        .fuse_bytes = 1,
-        .flash_poll_val_1 = 0x53,
-        .flash_poll_val_2 = 0x53,
-        .eeprom_poll_val_1 = 0xff,
-        .eeprom_poll_val_2 = 0xff,
-        .page_size = 128,
-        .eeprom_size = 1024,
-        .flash_size = 32768,
-    });
+    try client.setDevice(boards.uno);
     try client.enterProgrammingMode();
-
-    var hex_file = try std.fs.cwd().openFile("test-blinky-chips.atmega328p.bin", .{});
-    defer hex_file.close();
 
     var address: u16 = 0;
 
-    var size = (try hex_file.stat()).size;
+    var size = (try bin_file.stat()).size;
     while (address < size) {
         try client.loadAddress(address);
 
         var buf: [128]u8 = undefined;
-        var bytes_written = try hex_file.reader().read(&buf);
+        var bytes_written = try bin_file.reader().read(&buf);
 
         std.log.info("Writing {d} at {d} (program size: {d})", .{ bytes_written, address, size });
-        try client.programPagePreData(@intCast(u16, bytes_written), .flash);
-        try port.writer().writeAll(buf[0..bytes_written]);
-        try client.programPagePostData();
+        try client.programPage(buf[0..bytes_written], .flash);
 
         address += @intCast(u16, bytes_written);
         std.time.sleep(4 * std.time.ns_per_ms);
@@ -109,14 +106,14 @@ pub fn main() !void {
     std.log.info("Program uploaded!", .{});
 
     address = 0;
-    try hex_file.seekTo(0);
+    try bin_file.seekTo(0);
     while (address < size) {
         try client.loadAddress(address);
 
         var actual_buf: [128]u8 = undefined;
         var expected_buf: [128]u8 = undefined;
 
-        var expected_bytes_written = try hex_file.reader().read(&expected_buf);
+        var expected_bytes_written = try bin_file.reader().read(&expected_buf);
         _ = try client.readPage(&actual_buf, .flash);
 
         std.log.info("Verifying {d} at {d} (program size: {d})", .{ expected_bytes_written, address >> 1, size });
